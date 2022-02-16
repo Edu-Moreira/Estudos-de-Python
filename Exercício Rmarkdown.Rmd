@@ -1,0 +1,163 @@
+---
+title: "o Ibov é um termômetro da Economia Brasileira?"
+author: "Eduardo Moreira"
+date: "12/06/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Documento produzido no R Markdown
+
+É muito comum vermos a imprensa associar automaticamente o desempenho da bolsa com o desempenho da economia. Em especial nessa primeira quinzena de junho de 2021 quando o Ibov bateu recorde atrás de recorde, aliada a notícias de geração de empregos e alta do PIB trimestral. Dizer que um é reflexo do outro é uma reação irrefreável para qualquer jornalista do setor. 
+
+Particularmente tenho minhas dúvidas. A bolsa brasileira de fato corresponde a uma amostra da economia nacional? O índice bovespa (IBOV) retrata de modo fiel a atividade produtiva do país?
+
+Um dia desses durante meus estudos iniciais com a linguagem R, me fiz uma pergunta muito simples. Qual a correlação entre o PIB do Brasil e o IBOV?
+
+Bibliotecas utilizadas 
+
+```{r message=FALSE, warning=TRUE, paged.print=FALSE}
+
+library(tidyverse)
+library(lubridate)
+library(sidrar)
+library(tstools)
+library(zoo)
+library(scales)
+library(timetk)
+library(knitr)
+library(quantmod)
+library(ggplot2)
+library(readxl)
+library(stargazer)
+library(Quandl)
+```
+
+## Dados do Brasil
+
+Coletamos dados do PIB no SIDRA, apresentados em uma janela trimestral desde o primeiro trimestre de 1996. 
+
+```{r message=FALSE, warning=FALSE}
+
+PIB_BR = get_sidra(api='/t/1621/n1/all/v/all/p/all/c11255/90707/d/v584%202',header = T)%>%
+  mutate(date = as.yearqtr(`Trimestre (Código)`,format="%Y%q"))%>%
+  mutate(var_marginal = (Valor/lag(Valor,1)-1)*100)%>%
+  select(date,Valor,var_marginal)%>%
+  rename(PIB_BR=Valor)%>%
+  as_tibble()
+ 
+
+ggplot(PIB_BR, aes(x=date,y=PIB_BR))+geom_line()
+
+```
+
+Em seguida foram coletadas as cotações do índice BOVESPA. Diferente dos dados de PIB o índice são coletados da base online do Yahoo Finance e tem data inicial em 2007. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+getSymbols('^BVSP')
+ibov = tk_tbl(BVSP,rename_index = 'date')
+ibov  = ibov[,c(1,7)]%>%drop_na()
+ibov = ibov%>%rename('date' = date, 'cot' = BVSP.Adjusted)
+
+ibov = ibov%>%mutate(date = as.yearqtr(`date`,format= '%Y%q'))
+ibov = ibov%>%group_by(date)%>% summarise(val_ajust= mean(cot/1000))
+
+```
+
+Para juntar os dois numa mesma matriz e com o mesmo tamanho procedemos um "inner join". Assim fica definida a "matriz da economia brasileira". A partir dela podemos criar o gráfico com ambos os dados para visualização.
+
+```{r message=FALSE, warning=FALSE}
+eco_brasil = inner_join(ibov,PIB_BR,by='date')
+
+ggplot(eco_brasil, aes(x = date))+
+  geom_line(aes(y = val_ajust ,colour = "IBOV"))+
+  geom_line(aes(y = PIB_BR,colour = "PIB"))+
+  scale_colour_manual('',values = c('#2F2B71','#3496D2'))+
+  xlab("Data por trimeste ")+ylab("")+
+  labs(title = "Comparação PIB e IBOV")+
+  theme(panel.background = element_rect(fill = "#d7e0e2"), 
+        plot.background = element_rect(fill = '#d7e0e2'))
+        
+```
+
+Pelo gráfico é notável um alinhamento de direção entre PIB e IBOV durantes as crises de 2008 e 2020. Já sendo possível inferir que o índice e o produto interno não sejam muito correlacionados.
+
+De modo que verificamos a baixa correlação entre os dois.
+
+```{r echo=FALSE}
+correl = cor(eco_brasil$val_ajust,eco_brasil$PIB_BR)
+Tabela1 =as.data.frame(correl, row.names = "Correl(IBOV/PIB_BR)   ")
+stargazer(Tabela1, type = "text",style = 'qje', summary = F)
+
+```
+
+Se a correlação é tão baixa, da onde vem a ideia de citar o IBOV como um termômetro da economia. Nossas suspeitas recaem sobre os Estados Unidos, muito comum no nosso país um comportamento mimético dos correspondentes norte-americanos. Ou seja, se a imprensa americana cita a bolsa de lá como indicador da economia é natural que aqui esse comportamento seja copiado.
+
+
+## E nos E.U.A?
+
+A questão é: No caso dos Estados Unidos a bolsa mostra correspondência com PIB?
+Então coletamos o GDP (GROSS DOMESTIC PRODUCT [PIB]) na base do 'U.S. Nureau of Economic Analysis', divulgado pelo FED na plataforma "data.nasdaq.com" antiga 'QUANDL'. E buscamos no Yahoo Finance as cotações dos principais índices o S&P500, o NASDAQ e o DownJones.
+
+```{r echo=FALSE}
+
+Quandl.api_key('8mqeD-Sgg4p4qVSqVhn-')
+usa <- Quandl('FED/FU086902203_Q')
+colnames(usa) = c('DATE', "GDP")
+usa$GDP = usa$GDP/1000
+
+getSymbols('^GSPC')
+SP500 <-tk_tbl(GSPC,preserve_index = TRUE,rename_index = 'date')
+SP500 <-SP500[,c('date','GSPC.Adjusted')]%>%rename(DATE = date ,SP500 = GSPC.Adjusted)
+
+getSymbols('^IXIC')
+NASDAQ <-tk_tbl(IXIC, preserve_index = TRUE, rename_index = 'date')
+NASDAQ <-NASDAQ[,c('date','IXIC.Adjusted')]%>%rename(DATE = date ,NASDAQ = IXIC.Adjusted)
+
+getSymbols('^DJI')
+DownJones <-tk_tbl(DJI, preserve_index = TRUE, rename_index = 'date')
+DownJones <-DownJones[,c('date','DJI.Adjusted')]%>%rename(DATE = date ,DownJones = DJI.Adjusted)
+```
+Vizualização dos dados da economia americana.
+
+````{r echo = FALSE}
+
+eco_usa = inner_join(usa,SP500, by="DATE")%>%
+  inner_join(NASDAQ,by='DATE')%>%
+  inner_join(DownJones,by='DATE')%>%drop_na()
+
+ggplot(eco_usa, aes(x = DATE))+
+  geom_line(aes(y = SP500 ,colour = "SP500"))+
+  geom_line(aes(y = NASDAQ,colour = "NASDAQ"))+
+  geom_line(aes(y = DownJones,colour = "DownJones"))+
+  geom_line(aes(y = GDP,colour = "PIB"))+
+  scale_colour_manual('',values = c('#3496D2','#2F2B71','#2F2B72','#2F2b73'))+
+  xlab("Data por trimeste ")+ylab("")+
+  labs(title = "Comparação Economia USA")+
+  theme(panel.background = element_rect(fill = "#d7e0e2"), 
+        plot.background = element_rect(fill = '#d7e0e2'))
+        
+````
+
+
+Juntamos todos na mesma matriz através do inner join, a fim de alinhar as datas iniciais e finais de cada um. A partir dessa matriz calculamos a correlação entre eles.
+
+```{r echo=FALSE}
+
+correl_USA = cor(eco_usa[,-1])
+
+ggcorrplot::ggcorrplot(correl_USA, method = 'circle', lab = T, lab_col = '#000000', colors = c('#99d9ec','#d7e0e2','#605ea9'), title = "Correlação entre PIB e principais indices nos USA")
+
+stargazer(correl_USA, type = 'text',style = 'ajps')
+```
+## Conclusão
+
+Podemos observar,no caso americano, que a correlação é bastante alta, e portanto é uma associação razoável dizer que bolsa em alta é sinal de economia em alta. Muitos economistas questionam essa correspondência por causa dos estimulos financeiros do governo americano desde a crise de 2008 . 
+
+Fato é que no Brasil essa comparação não faz sentido. E podemos traçar algumas causas para isso, desde a dificuldade das empresas abrirem capital até a própria composição do IBOV. 
+
+Porém esse simplório estudo não pretende entrar em tais detalhes, se restringindo tão somente ao fato que a bolsa brasileira e em especial o IBOV não fornecem um grau de correlação suficiente para associar o seu desempenho com a economia nacional.
